@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-from lfx.log.logger import logger
 from lfx.schema.message import Message
 from lfx.services.deps import get_settings_service
 from lfx.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_USER
@@ -20,6 +19,22 @@ from platformdirs import user_cache_dir
 def unrestricted_standalone_attachments(monkeypatch):
     """These standalone conversion tests intentionally attach temporary local paths."""
     monkeypatch.setattr(get_settings_service().settings, "restrict_local_file_access", False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_user_cache_dir(tmp_path, monkeypatch):
+    """Point the user cache folder at a temp dir, so no test reads, writes or deletes the real one.
+
+    Message resolves "<flow>/<file>" paths against user_cache_dir("langflow") in lfx.schema.image,
+    and the tests below copy their sample images there through this module's own reference.
+    """
+    cache_root = tmp_path / "user_cache"
+
+    def _user_cache_dir(appname=None, *_args, **_kwargs):
+        return str(cache_root / appname) if appname else str(cache_root)
+
+    monkeypatch.setattr("lfx.schema.image.user_cache_dir", _user_cache_dir)
+    monkeypatch.setitem(globals(), "user_cache_dir", _user_cache_dir)
 
 
 @pytest.fixture
@@ -401,19 +416,6 @@ def test_should_not_use_attachment_prefix_that_triggers_gemini_refusal_in_file_t
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
-
-
-# Clean up the cache directory after all tests
-@pytest.fixture(autouse=True)
-def cleanup():
-    yield
-    # Clean up the real cache directory after tests
-    cache_dir = Path(user_cache_dir("langflow"))
-    if cache_dir.exists():
-        try:
-            shutil.rmtree(str(cache_dir))
-        except OSError as exc:
-            logger.error(f"Error cleaning up cache directory: {exc}")
 
 
 class _StorageBackendError(Exception):
